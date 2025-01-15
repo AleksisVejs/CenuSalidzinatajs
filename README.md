@@ -2,6 +2,19 @@
 
 A web application that scrapes product prices from various websites. The project consists of a Node.js backend server and a Vue.js frontend application.
 
+## Contents
+- [Project Structure](#project-structure)
+- [Prerequisites](#prerequisites)
+- [Installation](#installation)
+  - [Backend Setup](#backend-setup)
+  - [Frontend Setup](#frontend-setup)
+- [Running the Application](#running-the-application)
+  - [Start the Backend Server](#start-the-backend-server)
+  - [Start the Frontend Development Server](#start-the-frontend-development-server)
+- [Technologies Used](#technologies-used)
+- [Building for Production](#building-for-production)
+- [How It Works](#how-it-works)
+
 ## Project Structure
 
 ```
@@ -57,7 +70,7 @@ npm install
 
 1. From the project root directory:
 ```bash
-npm start
+node server.js
 ```
 The server will start on http://localhost:3000 (or the port specified in your .env file)
 
@@ -105,3 +118,26 @@ npm run build
 ```
 
 The production-ready files will be generated in the `frontend/dist` directory. 
+
+## How It Works
+
+The CenuSalidzinatajs (Price Comparator) works through the following process:
+
+1. **User Input**: Users can search for products through the Vue.js frontend interface.
+
+2. **Backend Processing**:
+   - The Express.js server receives search requests from the frontend
+   - Using Puppeteer and Cheerio, it scrapes product information from multiple e-commerce websites
+   - The data is processed and standardized to ensure consistent formatting
+
+3. **Price Comparison**:
+   - Products are matched across different websites using Fuse.js for fuzzy matching
+   - Prices are compared and sorted to show the best deals
+   - Additional information like product availability and shipping costs are included when available
+
+4. **Results Display**:
+   - The frontend receives the processed data and displays it in an easy-to-read format
+   - Users can sort results by price, store, or other criteria
+   - Each product listing includes direct links to the source websites
+
+The application updates prices in real-time when users perform searches, ensuring they always see the most current pricing information. 
