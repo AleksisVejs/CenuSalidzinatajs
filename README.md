@@ -18,7 +18,7 @@ A web application that scrapes product prices from various websites. The project
 ## Project Structure
 
 ```
-price-scraper/
+CenuSalidzinatajs/
 ├── frontend/         # Vue.js frontend application
 ├── server.js         # Express.js backend server
 ├── package.json      # Backend dependencies
@@ -38,18 +38,12 @@ Before running this project, make sure you have the following installed:
 1. Clone the repository and navigate to the project root:
 ```bash
 git clone https://github.com/AleksisVejs/CenuSalidzinatajs
-cd price-scraper
+cd CenuSalidzinatajs
 ```
 
 2. Install backend dependencies:
 ```bash
 npm install
-```
-
-3. Create a `.env` file in the root directory and add necessary environment variables:
-```
-PORT=3000
-# Add other environment variables as needed
 ```
 
 ### Frontend Setup
