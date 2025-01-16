@@ -44,37 +44,29 @@ async function initBrowser() {
                 '--no-sandbox',
                 '--disable-setuid-sandbox',
                 '--disable-dev-shm-usage',
-                '--disable-accelerated-2d-canvas',
-                '--disable-gpu',
-                '--memory-pressure-off',
-                '--disable-background-timer-throttling',
-                '--disable-backgrounding-occluded-windows',
-                '--disable-web-security',
-                '--no-first-run',
-                '--no-zygote',
-                '--single-process',
-                '--disable-features=site-per-process',
-                '--disable-features=TranslateUI',
-                '--disable-extensions',
-                '--disable-component-extensions-with-background-pages',
-                '--disable-default-apps',
-                '--mute-audio'
-            ]
+                '--disable-web-security'
+            ],
+            timeout: 30000
         });
+        
         isInitialized = true;
         browserDisconnected = false;
 
         // Handle browser disconnection
-        browser.on('disconnected', () => {
-            console.log('Browser disconnected, marking for cleanup...');
-            isInitialized = false;
-            browserDisconnected = true;
-        });
-
-        // Handle process termination
-        process.on('SIGINT', async () => {
-            await closeBrowser();
-            process.exit();
+        browser.on('disconnected', async () => {
+            if (activePages.size > 0) {
+                console.log('Browser disconnected with active pages, reinitializing...');
+                isInitialized = false;
+                browserDisconnected = true;
+                browser = null;
+                await initBrowser();
+            } else {
+                console.log('Browser disconnected, cleaning up...');
+                isInitialized = false;
+                browserDisconnected = true;
+                browser = null;
+                await closeBrowser();
+            }
         });
 
         return browser;
@@ -87,12 +79,27 @@ async function initBrowser() {
     }
 }
 
-// Function to ensure browser is ready
+// Function to ensure browser is ready with retry
 async function ensureBrowser() {
-    if (!browser || !isInitialized || browserDisconnected) {
-        return await initBrowser();
+    let attempts = 0;
+    const maxAttempts = 3;
+    
+    while (attempts < maxAttempts) {
+        try {
+            if (!browser || !isInitialized || browserDisconnected) {
+                await initBrowser();
+            }
+            return browser;
+        } catch (error) {
+            attempts++;
+            console.error(`Browser initialization failed (attempt ${attempts}/${maxAttempts}):`, error.message);
+            if (attempts === maxAttempts) {
+                throw error;
+            }
+            // Wait before retrying
+            await new Promise(resolve => setTimeout(resolve, 1000 * attempts));
+        }
     }
-    return browser;
 }
 
 // Function to validate page is still valid
@@ -125,12 +132,28 @@ async function waitForSelectorWithEarlySuccess(page, selector, timeout) {
                         resolve(null);
                         return;
                     }
+
+                    // Check for products
                     const element = await page.$(selector);
                     if (element) {
                         clearInterval(checkInterval);
                         resolve(element);
+                        return;
+                    }
+
+                    // Check if page has finished loading
+                    const readyState = await page.evaluate(() => document.readyState);
+                    if (readyState === 'complete') {
+                        // If page is loaded and we still don't have the element, resolve with null
+                        const finalCheck = await page.$(selector);
+                        if (!finalCheck) {
+                            clearInterval(checkInterval);
+                            resolve(null);
+                            return;
+                        }
                     }
                 }, 100);
+
                 // Cleanup interval after timeout
                 setTimeout(() => {
                     clearInterval(checkInterval);
@@ -153,11 +176,8 @@ async function getStealthPage() {
         activePages.add(page);
         
         // Basic page setup
-        await Promise.all([
-            page.setViewport({ width: 1920, height: 1080 }),
-            page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'),
-            page.setDefaultNavigationTimeout(60000)
-        ]);
+        await page.setViewport({ width: 1920, height: 1080 });
+        await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
         
         // Error handling
         page.on('error', async (err) => {
@@ -170,22 +190,27 @@ async function getStealthPage() {
             activePages.delete(page);
         });
         
-        // Minimal request interception
-        await page.setRequestInterception(true);
-        page.on('request', request => {
-            const resourceType = request.resourceType();
-            if (['image', 'stylesheet', 'font', 'media'].includes(resourceType)) {
-                request.abort();
-            } else {
-                request.continue();
-            }
-        });
-        
         return page;
     } catch (error) {
         console.error('Error creating page:', error);
         throw error;
     }
+}
+
+// Add retry utility function at the top level
+async function retry(operation, maxAttempts = 3, delay = 1000) {
+    let lastError;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        try {
+            return await operation();
+        } catch (error) {
+            lastError = error;
+            if (attempt < maxAttempts) {
+                await new Promise(resolve => setTimeout(resolve, delay * attempt));
+            }
+        }
+    }
+    throw lastError;
 }
 
 // Base scraper class for common functionality
@@ -195,33 +220,23 @@ class BaseScraper {
         this.baseUrl = baseUrl;
     }
 
-    async scrape(keyword) {
+    async scrape(keyword, runningTotal = 0) {
         let page = null;
         try {
             // Get new page
             page = await getStealthPage();
-            if (!page || !await isPageValid(page)) {
-                throw new Error('Invalid page after creation');
-            }
-
-            const searchUrl = this.getSearchUrl(keyword);
             
-            // Navigation
+            // Navigate to search URL
+            const searchUrl = this.getSearchUrl(keyword);
             await page.goto(searchUrl, { 
-                waitUntil: 'domcontentloaded',
+                waitUntil: 'networkidle0',
                 timeout: 30000 
             });
-
-            if (!await isPageValid(page)) {
-                throw new Error('Page invalid after navigation');
-            }
-
+            
             // Wait for products
             await this.waitForProducts(page);
-            if (!await isPageValid(page)) {
-                throw new Error('Page invalid after waiting for products');
-            }
-
+            
+            // Check for results
             const hasResults = await this.checkForResults(page);
             if (!hasResults) {
                 console.log(`${this.name}: No results found`);
@@ -229,29 +244,22 @@ class BaseScraper {
             }
 
             // Extract products
-            const products = await Promise.race([
-                this.extractProducts(page),
-                new Promise((_, reject) => 
-                    setTimeout(() => reject(new Error('Product extraction timeout')), 20000)
-                )
-            ]);
-
+            const products = await this.extractProducts(page);
+            const count = products?.length || 0;
+            console.log(`${this.name}: Found ${count} results. Total so far: ${runningTotal + count}`);
             return products || [];
+            
         } catch (error) {
             console.error(`${this.name} scraping error:`, error.message);
-            if (browserDisconnected) {
-                throw new Error('Browser disconnected during scraping');
-            }
             return [];
         } finally {
             if (page) {
                 try {
-                    await page.close().catch(() => {});
-                } catch (closeError) {
-                    console.error(`Error closing page for ${this.name}:`, closeError.message);
-                } finally {
                     activePages.delete(page);
-                }
+                    if (!page.isClosed()) {
+                        await page.close().catch(() => {});
+                    }
+                } catch (e) {}
             }
         }
     }
