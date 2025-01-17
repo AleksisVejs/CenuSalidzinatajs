@@ -411,6 +411,7 @@
 import axios from 'axios';
 import { reactive } from 'vue';
 import './assets/styles.css';
+import { isSimilarTitle, getStandardizedGroupName } from './utils/titleMatching';
 
 export default {
   name: 'App',
@@ -581,7 +582,7 @@ export default {
 
         // Find similar items
         items.forEach((other, otherIndex) => {
-          if (index !== otherIndex && !used.has(otherIndex) && this.isSimilarTitle(item.title, other.title)) {
+          if (index !== otherIndex && !used.has(otherIndex) && isSimilarTitle(item.title, other.title)) {
             group.push(other);
             used.add(otherIndex);
           }
@@ -599,112 +600,8 @@ export default {
 
       return groups;
     },
-    isSimilarTitle(title1, title2) {
-      // Normalize titles
-      const normalize = (text) => {
-        return text.toLowerCase()
-          .replace(/[.,/#!$%^&*;:{}=\-_`~()]/g, ' ')
-          .replace(/\s+/g, ' ')
-          .trim();
-      };
-
-      const normalizedTitle1 = normalize(title1);
-      const normalizedTitle2 = normalize(title2);
-
-      // If titles are exactly the same, they're similar
-      if (normalizedTitle1 === normalizedTitle2) {
-        return true;
-      }
-
-      // Extract model numbers and product codes
-      const extractProductInfo = (text) => {
-        // Common product code patterns
-        const patterns = [
-          // Model numbers like "SM-A515" or "iPhone 13"
-          /(?:[a-z]{1,4}[-]?[0-9]{2,4}[a-z]?)/i,
-          // Product codes like "MWP22", "MQAG3"
-          /\b[a-z]{2,4}[0-9]{2,4}[a-z]?\b/i,
-          // Version numbers like "v2.0", "3rd gen"
-          /\bv?[0-9](?:\.[0-9])?\b|\b[0-9](?:st|nd|rd|th)\s*gen(?:eration)?\b/i
-        ];
-
-        const matches = [];
-        patterns.forEach(pattern => {
-          const match = text.match(pattern);
-          if (match) {
-            matches.push(match[0].toLowerCase());
-          }
-        });
-        return matches;
-      };
-
-      // Check if products share any model numbers or product codes
-      const codes1 = extractProductInfo(normalizedTitle1);
-      const codes2 = extractProductInfo(normalizedTitle2);
-      
-      if (codes1.length > 0 && codes2.length > 0) {
-        // If both titles have codes, they must share at least one
-        const sharedCodes = codes1.some(code => codes2.includes(code));
-        if (!sharedCodes) {
-          return false;
-        }
-      }
-
-      // Extract key specifications
-      const extractSpecs = (text) => {
-        return {
-          storage: text.match(/\b(?:\d+)\s*(?:gb|tb)\b/gi) || [],
-          ram: text.match(/\b(?:\d+)\s*(?:gb)\s*ram\b/gi) || [],
-          size: text.match(/\b(?:\d+(?:\.\d+)?)\s*(?:inch|"|''|cm)\b/gi) || [],
-          resolution: text.match(/\b(?:\d+(?:\s*x\s*\d+)?)\s*(?:px|mp)\b/gi) || [],
-          color: text.match(/\b(?:black|white|gold|silver|gray|blue|red|pink|green)\b/gi) || []
-        };
-      };
-
-      const specs1 = extractSpecs(normalizedTitle1);
-      const specs2 = extractSpecs(normalizedTitle2);
-
-      // If both titles specify storage, they must match
-      if (specs1.storage.length > 0 && specs2.storage.length > 0) {
-        const storage1 = specs1.storage[0].toLowerCase();
-        const storage2 = specs2.storage[0].toLowerCase();
-        if (storage1 !== storage2) {
-          return false;
-        }
-      }
-
-      // If both titles specify RAM, they must match
-      if (specs1.ram.length > 0 && specs2.ram.length > 0) {
-        const ram1 = specs1.ram[0].toLowerCase();
-        const ram2 = specs2.ram[0].toLowerCase();
-        if (ram1 !== ram2) {
-          return false;
-        }
-      }
-
-      // If both titles specify size, they must match
-      if (specs1.size.length > 0 && specs2.size.length > 0) {
-        const size1 = specs1.size[0].toLowerCase();
-        const size2 = specs2.size[0].toLowerCase();
-        if (size1 !== size2) {
-          return false;
-        }
-      }
-
-      // Calculate word similarity
-      const words1 = new Set(normalizedTitle1.split(' '));
-      const words2 = new Set(normalizedTitle2.split(' '));
-      
-      // Find significant words (longer than 3 characters)
-      const significantWords1 = [...words1].filter(word => word.length > 3);
-      const significantWords2 = [...words2].filter(word => word.length > 3);
-      
-      // Calculate how many significant words are shared
-      const sharedWords = significantWords1.filter(word => significantWords2.includes(word));
-      const similarityScore = sharedWords.length / Math.max(significantWords1.length, significantWords2.length);
-
-      // Require at least 60% similarity in significant words
-      return similarityScore >= 0.6;
+    getCombinedGroupName(group) {
+      return getStandardizedGroupName(group);
     },
     levenshteinDistance(str1, str2) {
       const m = str1.length;
@@ -775,76 +672,6 @@ export default {
       });
       
       return cleanTitle.trim();
-    },
-    getCombinedGroupName(group) {
-      // If all items in the group are identical, just return the first item's title
-      if (group.every(item => item.title === group[0].title)) {
-        return group[0].title;
-      }
-
-      // Get all cleaned titles
-      const titles = group.map(item => {
-        // First clean each title
-        let title = item.title
-          .replace(/\([^)]*\)/g, '') // Remove anything in parentheses
-          .replace(/,.*$/, '')       // Remove anything after comma
-          .trim();
-
-        // Extract storage size if present
-        const storageMatch = item.title.match(/(\d+)\s*(?:gb|tb)/i);
-        const storage = storageMatch ? storageMatch[0] : '';
-
-        // Remove common words and colors
-        const commonWords = [
-          'black', 'white', 'red', 'blue', 'green', 'yellow', 'pink', 'purple', 'gold', 'silver', 'gray', 'grey', 'teal',
-          'melns', 'melna', 'balts', 'balta', 'sarkans', 'sarkana', 'zils', 'zila', 'zaļš', 'zaļa', 'dzeltens', 'dzeltena',
-          'rozā', 'violets', 'violeta', 'zelts', 'zelta', 'sudrabs', 'sudraba', 'pelēks', 'pelēka'
-        ];
-        
-        commonWords.forEach(word => {
-          title = title.replace(new RegExp(`\\b${word}\\b`, 'gi'), '');
-        });
-
-        // Add storage back if it exists
-        return storage ? `${title.trim()} ${storage}` : title.trim();
-      });
-
-      // Find the most common words across all titles
-      const wordFrequency = {};
-      titles.forEach(title => {
-        const words = title.split(/\s+/);
-        words.forEach(word => {
-          wordFrequency[word] = (wordFrequency[word] || 0) + 1;
-        });
-      });
-
-      // Get words that appear in at least half of the titles
-      const commonWords = Object.entries(wordFrequency)
-        .filter(([, count]) => count >= titles.length / 2)
-        .map(([word]) => word)
-        .sort((a, b) => wordFrequency[b] - wordFrequency[a]);
-
-      // Reconstruct the title using common words in their original order
-      const firstTitle = titles[0];
-      const titleWords = firstTitle.split(/\s+/);
-      const finalWords = titleWords.filter(word => commonWords.includes(word));
-
-      // Add storage range if there are different storage variants
-      const storages = [...new Set(group
-        .map(item => item.title.match(/(\d+)\s*(?:gb|tb)/i)?.[0])
-        .filter(Boolean))];
-      
-      if (storages.length > 1) {
-        // Sort storages numerically
-        storages.sort((a, b) => {
-          const numA = parseInt(a.match(/\d+/)[0]);
-          const numB = parseInt(b.match(/\d+/)[0]);
-          return numA - numB;
-        });
-        return `${finalWords.join(' ')} (${storages.join('/')})`;
-      }
-
-      return finalWords.join(' ');
     },
     calculateRelevanceScore(title, query) {
       // Normalize strings for comparison
